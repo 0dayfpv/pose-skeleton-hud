@@ -23,8 +23,10 @@ import {
   computeHandMetrics,
   type AppStatus,
   type JointId,
+  type PersonId,
   type Point3D,
   type TrackedHand,
+  type TrackedPerson,
   type ViewMode,
 } from "../engine/geometry";
 
@@ -32,6 +34,7 @@ export interface DrawSkeletonFrameParams {
   landmarks: readonly Point3D[] | null;
   hands?: readonly TrackedHand[];
   faceLandmarks?: readonly Point3D[] | null;
+  persons?: readonly TrackedPerson[];
   showFaceMesh?: boolean;
   angles?: Partial<Record<JointId, number | null>>;
   selectedJoints?: readonly JointId[];
@@ -48,6 +51,7 @@ export interface SkeletonCanvasProps {
   landmarks: readonly Point3D[] | null;
   hands?: readonly TrackedHand[];
   faceLandmarks?: readonly Point3D[] | null;
+  persons?: readonly TrackedPerson[];
   showFaceMesh?: boolean;
   angles: Partial<Record<JointId, number | null>>;
   selectedJoints: readonly JointId[];
@@ -64,6 +68,11 @@ const COLOR_LEFT = "#22d3ee";
 const COLOR_RIGHT = "#f472b6";
 const COLOR_TORSO = "#e2e8f0";
 const COLOR_MIDLINE = "#94a3b8";
+
+const P2_COLOR_LEFT = "#10b981";
+const P2_COLOR_RIGHT = "#f59e0b";
+const P2_COLOR_TORSO = "#c4b5fd";
+const P2_COLOR_MIDLINE = "#a78bfa";
 const BLACKOUT_BG = "#05080f";
 
 const FINGERTIP_INDICES = new Set<number>([4, 8, 12, 16, 20]);
@@ -157,7 +166,19 @@ function getConnectionRegion(a: number, b: number): BodyRegion {
   return "midline";
 }
 
-function regionColor(region: BodyRegion): string {
+function regionColor(region: BodyRegion, personId: PersonId = 0): string {
+  if (personId === 1) {
+    switch (region) {
+      case "left":
+        return P2_COLOR_LEFT;
+      case "right":
+        return P2_COLOR_RIGHT;
+      case "torso":
+        return P2_COLOR_TORSO;
+      case "midline":
+        return P2_COLOR_MIDLINE;
+    }
+  }
   switch (region) {
     case "left":
       return COLOR_LEFT;
@@ -170,8 +191,13 @@ function regionColor(region: BodyRegion): string {
   }
 }
 
-function landmarkColor(index: number): string {
+function landmarkColor(index: number, personId: PersonId = 0): string {
   const side = getLandmarkSide(index);
+  if (personId === 1) {
+    if (side === "left") return P2_COLOR_LEFT;
+    if (side === "right") return P2_COLOR_RIGHT;
+    return P2_COLOR_TORSO;
+  }
   if (side === "left") return COLOR_LEFT;
   if (side === "right") return COLOR_RIGHT;
   return COLOR_TORSO;
@@ -421,8 +447,14 @@ function drawFaceAndHeadLayer(
   projectY: (ny: number) => number,
   isBlackout: boolean,
   showFaceMesh: boolean,
+  personId: PersonId = 0,
 ): void {
   if (faceLandmarks.length < 468) return;
+
+  const leftColor = personId === 1 ? P2_COLOR_LEFT : COLOR_LEFT;
+  const rightColor = personId === 1 ? P2_COLOR_RIGHT : COLOR_RIGHT;
+  const contourColor = personId === 1 ? "#34d399" : "#38bdf8";
+  const torsoColor = personId === 1 ? P2_COLOR_TORSO : COLOR_TORSO;
 
   // 0. Neck spine bridge from Pose shoulders midpoint (11 & 12) to Chin (152)
   const chin = faceLandmarks[152];
@@ -439,8 +471,8 @@ function drawFaceAndHeadLayer(
     const chinY = projectY(chin.y);
 
     ctx.save();
-    ctx.strokeStyle = COLOR_TORSO;
-    ctx.shadowColor = COLOR_LEFT;
+    ctx.strokeStyle = torsoColor;
+    ctx.shadowColor = leftColor;
     ctx.shadowBlur = isBlackout ? 10 : 6;
     ctx.lineWidth = isBlackout ? 2.6 : 2.2;
     ctx.globalAlpha = 0.78;
@@ -462,7 +494,7 @@ function drawFaceAndHeadLayer(
       FaceLandmarker.FACE_LANDMARKS_TESSELATION,
       projectX,
       projectY,
-      "#38bdf8",
+      contourColor,
       0.55,
       isBlackout ? 0.19 : 0.12,
       0,
@@ -477,7 +509,7 @@ function drawFaceAndHeadLayer(
       FaceLandmarker.FACE_LANDMARKS_FACE_OVAL,
       projectX,
       projectY,
-      "#38bdf8",
+      contourColor,
       isBlackout ? 2.1 : 1.7,
       0.88,
       isBlackout ? 10 : 5,
@@ -512,8 +544,8 @@ function drawFaceAndHeadLayer(
     const crownY = fy + vy * 0.26;
 
     ctx.save();
-    ctx.strokeStyle = "#38bdf8";
-    ctx.shadowColor = "#38bdf8";
+    ctx.strokeStyle = contourColor;
+    ctx.shadowColor = contourColor;
     ctx.shadowBlur = isBlackout ? 10 : 5;
     ctx.lineWidth = isBlackout ? 1.8 : 1.4;
     ctx.globalAlpha = 0.72;
@@ -588,7 +620,7 @@ function drawFaceAndHeadLayer(
       FaceLandmarker.FACE_LANDMARKS_LEFT_EYEBROW,
       projectX,
       projectY,
-      COLOR_LEFT,
+      leftColor,
       1.8,
       0.88,
       isBlackout ? 8 : 4,
@@ -601,7 +633,7 @@ function drawFaceAndHeadLayer(
       FaceLandmarker.FACE_LANDMARKS_RIGHT_EYEBROW,
       projectX,
       projectY,
-      COLOR_RIGHT,
+      rightColor,
       1.8,
       0.88,
       isBlackout ? 8 : 4,
@@ -631,7 +663,7 @@ function drawFaceAndHeadLayer(
       FaceLandmarker.FACE_LANDMARKS_LEFT_EYE,
       projectX,
       projectY,
-      COLOR_LEFT,
+      leftColor,
       1.7,
       0.95,
       isBlackout ? 8 : 4,
@@ -644,7 +676,7 @@ function drawFaceAndHeadLayer(
       FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE,
       projectX,
       projectY,
-      COLOR_RIGHT,
+      rightColor,
       1.7,
       0.95,
       isBlackout ? 8 : 4,
@@ -661,7 +693,7 @@ function drawFaceAndHeadLayer(
       [469, 470, 471, 472],
       projectX,
       projectY,
-      COLOR_RIGHT,
+      rightColor,
       isBlackout,
     );
     // Left iris: center 473, perimeter 474..477
@@ -672,7 +704,7 @@ function drawFaceAndHeadLayer(
       [474, 475, 476, 477],
       projectX,
       projectY,
-      COLOR_LEFT,
+      leftColor,
       isBlackout,
     );
   }
@@ -691,6 +723,8 @@ function drawHandsLayer(
   width: number,
   height: number,
   isBlackout: boolean,
+  personId: PersonId = 0,
+  showPersonPrefix = false,
 ): void {
   if (!hands || hands.length === 0) return;
 
@@ -701,8 +735,22 @@ function drawHandsLayer(
     if (!lms || lms.length < 21) continue;
 
     const isLeft = hand.handedness === "Left";
-    const primaryColor = isLeft ? COLOR_LEFT : COLOR_RIGHT;
-    const secondaryColor = isLeft ? "#67e8f9" : "#fb923c";
+    const primaryColor =
+      personId === 1
+        ? isLeft
+          ? P2_COLOR_LEFT
+          : P2_COLOR_RIGHT
+        : isLeft
+          ? COLOR_LEFT
+          : COLOR_RIGHT;
+    const secondaryColor =
+      personId === 1
+        ? isLeft
+          ? "#6ee7b7"
+          : "#fcd34d"
+        : isLeft
+          ? "#67e8f9"
+          : "#fb923c";
     const tipColor = isLeft ? "#a5f3fc" : "#fde047";
 
     // Bridge from Pose wrist (15 for Left, 16 for Right) to Hand wrist (0)
@@ -825,9 +873,10 @@ function drawHandsLayer(
     if (isValidPoint2D(handWrist)) {
       const wx = projectX(handWrist.x);
       const wy = projectY(handWrist.y);
+      const prefix = showPersonPrefix ? `P${personId + 1}•` : "";
       const tagText = metrics.isPinching
-        ? `${isLeft ? "L" : "R"}.HAND • PINCH`
-        : `${isLeft ? "L" : "R"}.HAND • ${metrics.extendedFingers}F`;
+        ? `${prefix}${isLeft ? "L" : "R"}.HAND • PINCH`
+        : `${prefix}${isLeft ? "L" : "R"}.HAND • ${metrics.extendedFingers}F`;
 
       ctx.save();
       ctx.shadowBlur = 0;
@@ -865,6 +914,73 @@ function drawHandsLayer(
   }
 }
 
+function drawPersonBeacon(
+  ctx: CanvasRenderingContext2D,
+  personId: PersonId,
+  landmarks: readonly Point3D[],
+  faceLandmarks: readonly Point3D[] | null,
+  projectX: (nx: number) => number,
+  projectY: (ny: number) => number,
+  width: number,
+  height: number,
+): void {
+  const forehead = faceLandmarks?.[10];
+  const nose = landmarks[0];
+  const lSh = landmarks[11];
+  const rSh = landmarks[12];
+
+  let anchorX: number | null = null;
+  let anchorY: number | null = null;
+
+  if (isValidPoint2D(forehead)) {
+    anchorX = projectX(forehead.x);
+    anchorY = projectY(forehead.y) - 26;
+  } else if (isValidPoint2D(nose)) {
+    anchorX = projectX(nose.x);
+    anchorY = projectY(nose.y) - 34;
+  } else if (isValidPoint2D(lSh) && isValidPoint2D(rSh)) {
+    anchorX = (projectX(lSh.x) + projectX(rSh.x)) * 0.5;
+    anchorY = Math.min(projectY(lSh.y), projectY(rSh.y)) - 32;
+  }
+
+  if (anchorX === null || anchorY === null) return;
+
+  const label = personId === 0 ? "P1 • SUBJECT 01" : "P2 • SUBJECT 02";
+  const accent = personId === 0 ? COLOR_LEFT : P2_COLOR_LEFT;
+
+  ctx.save();
+  ctx.shadowBlur = 8;
+  ctx.shadowColor = accent;
+  ctx.globalAlpha = 0.94;
+  ctx.font =
+    "700 10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  const pillW = label.length * 6.5 + 14;
+  const pillH = 19;
+  const boxX = Math.max(4, Math.min(width - pillW - 4, anchorX - pillW * 0.5));
+  const boxY = Math.max(4, Math.min(height - pillH - 4, anchorY - pillH));
+
+  ctx.fillStyle = "rgba(5, 8, 15, 0.9)";
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 1.2;
+  if (typeof ctx.roundRect === "function") {
+    ctx.beginPath();
+    ctx.roundRect(boxX, boxY, pillW, pillH, 4);
+    ctx.fill();
+    ctx.stroke();
+  } else {
+    ctx.fillRect(boxX, boxY, pillW, pillH);
+    ctx.strokeRect(boxX, boxY, pillW, pillH);
+  }
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = accent;
+  ctx.fillText(label, boxX + pillW * 0.5, boxY + pillH * 0.5 + 0.5);
+  ctx.restore();
+}
+
 export function drawSkeletonFrame(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -884,6 +1000,7 @@ export function drawSkeletonFrame(
     landmarks,
     hands = [],
     faceLandmarks = null,
+    persons,
     showFaceMesh = true,
     viewMode,
     mirrored,
@@ -903,241 +1020,303 @@ export function drawSkeletonFrame(
   const projectX = (nx: number): number => (mirrored ? 1 - nx : nx) * width;
   const projectY = (ny: number): number => ny * height;
 
-  const hasDetailedFace = Boolean(
-    faceLandmarks && faceLandmarks.length >= 468,
-  );
-  const hasDetailedLeftHand = hands.some(
-    (h) => h.handedness === "Left" && h.landmarks.length >= 21,
-  );
-  const hasDetailedRightHand = hands.some(
-    (h) => h.handedness === "Right" && h.landmarks.length >= 21,
-  );
+  // Build unified list of subjects to render (1 or 2 people)
+  const subjects: Array<{
+    personId: PersonId;
+    landmarks: readonly Point3D[] | null;
+    angles: Partial<Record<JointId, number | null>>;
+    hands: readonly TrackedHand[];
+    faceLandmarks: readonly Point3D[] | null;
+  }> =
+    persons && persons.length > 0
+      ? persons.map((p) => ({
+          personId: p.personId,
+          landmarks: p.landmarks,
+          angles: p.angles,
+          hands: p.hands,
+          faceLandmarks: p.faceLandmarks,
+        }))
+      : [
+          {
+            personId: 0,
+            landmarks,
+            angles,
+            hands,
+            faceLandmarks,
+          },
+        ];
 
-  const shouldSkipPoseLandmark = (index: number): boolean => {
-    if (hasDetailedFace && POSE_FACE_INDICES.has(index)) {
-      return true;
-    }
-    if (hasDetailedLeftHand && POSE_LEFT_HAND_INDICES.has(index)) {
-      return true;
-    }
-    if (hasDetailedRightHand && POSE_RIGHT_HAND_INDICES.has(index)) {
-      return true;
-    }
-    return false;
-  };
+  const isMultiPersonActive = subjects.length > 1;
 
-  if (landmarks && landmarks.length > 0) {
-    // Non-mutating edge list sorted back-to-front in blackout mode
-    const edges = POSE_CONNECTIONS.filter(
-      ([start, end]) =>
-        !shouldSkipPoseLandmark(start) && !shouldSkipPoseLandmark(end),
-    ).map(([start, end]) => {
-      const a = landmarks[start];
-      const b = landmarks[end];
-      const avgZ =
-        a && b && Number.isFinite(a.z) && Number.isFinite(b.z)
-          ? (a.z + b.z) / 2
-          : 0;
-      return { start, end, avgZ };
-    });
+  for (const subject of subjects) {
+    const pId = subject.personId;
+    const pLandmarks = subject.landmarks;
+    const pHands = subject.hands;
+    const pFace = subject.faceLandmarks;
+    const pAngles = subject.angles;
 
-    if (isBlackout) {
-      edges.sort((e1, e2) => e2.avgZ - e1.avgZ);
-    }
+    const hasDetailedFace = Boolean(pFace && pFace.length >= 468);
+    const hasDetailedLeftHand = pHands.some(
+      (h) => h.handedness === "Left" && h.landmarks.length >= 21,
+    );
+    const hasDetailedRightHand = pHands.some(
+      (h) => h.handedness === "Right" && h.landmarks.length >= 21,
+    );
 
-    ctx.save();
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-
-    for (const { start, end } of edges) {
-      const a = landmarks[start];
-      const b = landmarks[end];
-      if (
-        !a ||
-        !b ||
-        !Number.isFinite(a.x) ||
-        !Number.isFinite(a.y) ||
-        !Number.isFinite(b.x) ||
-        !Number.isFinite(b.y)
-      ) {
-        continue;
+    const shouldSkipPoseLandmark = (index: number): boolean => {
+      if (hasDetailedFace && POSE_FACE_INDICES.has(index)) {
+        return true;
       }
+      if (hasDetailedLeftHand && POSE_LEFT_HAND_INDICES.has(index)) {
+        return true;
+      }
+      if (hasDetailedRightHand && POSE_RIGHT_HAND_INDICES.has(index)) {
+        return true;
+      }
+      return false;
+    };
 
-      const visA = getVisibility(a);
-      const visB = getVisibility(b);
-      const minVis = Math.min(visA, visB);
-      if (minVis <= 0.02) continue;
-
-      const color = regionColor(getConnectionRegion(start, end));
-      const visAlpha = visibilityAlpha(minVis, dimThreshold);
+    if (pLandmarks && pLandmarks.length > 0) {
+      const edges = POSE_CONNECTIONS.filter(
+        ([start, end]) =>
+          !shouldSkipPoseLandmark(start) && !shouldSkipPoseLandmark(end),
+      ).map(([start, end]) => {
+        const a = pLandmarks[start];
+        const b = pLandmarks[end];
+        const avgZ =
+          a && b && Number.isFinite(a.z) && Number.isFinite(b.z)
+            ? (a.z + b.z) / 2
+            : 0;
+        return { start, end, avgZ };
+      });
 
       if (isBlackout) {
-        const avgDepth =
-          (computeDepthFactor(a.z) + computeDepthFactor(b.z)) / 2;
-        ctx.lineWidth = 1.75 + avgDepth * 4.25;
-        ctx.globalAlpha = (0.55 + 0.45 * avgDepth) * visAlpha;
-        ctx.shadowBlur = 3 + avgDepth * 16;
-      } else {
-        ctx.lineWidth = 3;
-        ctx.globalAlpha = 0.8 * visAlpha;
-        ctx.shadowBlur = 8;
+        edges.sort((e1, e2) => e2.avgZ - e1.avgZ);
       }
 
-      ctx.strokeStyle = color;
-      ctx.shadowColor = color;
-      ctx.beginPath();
-      ctx.moveTo(projectX(a.x), projectY(a.y));
-      ctx.lineTo(projectX(b.x), projectY(b.y));
-      ctx.stroke();
-    }
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
 
-    // Non-mutating landmark draw order sorted back-to-front in blackout mode
-    const indices = landmarks
-      .map((_, idx) => idx)
-      .filter((idx) => !shouldSkipPoseLandmark(idx));
-    if (isBlackout) {
-      indices.sort((i1, i2) => {
-        const z1 = Number.isFinite(landmarks[i1]?.z) ? landmarks[i1].z : 0;
-        const z2 = Number.isFinite(landmarks[i2]?.z) ? landmarks[i2].z : 0;
-        return z2 - z1;
-      });
-    }
+      for (const { start, end } of edges) {
+        const a = pLandmarks[start];
+        const b = pLandmarks[end];
+        if (
+          !a ||
+          !b ||
+          !Number.isFinite(a.x) ||
+          !Number.isFinite(a.y) ||
+          !Number.isFinite(b.x) ||
+          !Number.isFinite(b.y)
+        ) {
+          continue;
+        }
 
-    for (const idx of indices) {
-      const lm = landmarks[idx];
-      if (!lm || !Number.isFinite(lm.x) || !Number.isFinite(lm.y)) continue;
-      const vis = getVisibility(lm);
-      if (vis <= 0.02) continue;
+        const visA = getVisibility(a);
+        const visB = getVisibility(b);
+        const minVis = Math.min(visA, visB);
+        if (minVis <= 0.02) continue;
 
-      const px = projectX(lm.x);
-      const py = projectY(lm.y);
-      const color = landmarkColor(idx);
-      const visAlpha = visibilityAlpha(vis, dimThreshold);
-      const depth = computeDepthFactor(lm.z);
-      const radius = isBlackout ? 3.0 + depth * 6.0 : 4.5;
+        const color = regionColor(getConnectionRegion(start, end), pId);
+        const visAlpha = visibilityAlpha(minVis, dimThreshold);
 
-      ctx.fillStyle = color;
-      ctx.shadowColor = color;
-      ctx.shadowBlur = isBlackout ? 3 + depth * 16 : 10;
-      ctx.globalAlpha = isBlackout
-        ? (0.55 + 0.45 * depth) * visAlpha
-        : 0.9 * visAlpha;
+        if (isBlackout) {
+          const avgDepth =
+            (computeDepthFactor(a.z) + computeDepthFactor(b.z)) / 2;
+          ctx.lineWidth = 1.75 + avgDepth * 4.25;
+          ctx.globalAlpha = (0.55 + 0.45 * avgDepth) * visAlpha;
+          ctx.shadowBlur = 3 + avgDepth * 16;
+        } else {
+          ctx.lineWidth = 3;
+          ctx.globalAlpha = 0.8 * visAlpha;
+          ctx.shadowBlur = 8;
+        }
 
-      ctx.beginPath();
-      ctx.arc(px, py, radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      if (vis >= dimThreshold) {
-        ctx.shadowBlur = 0;
-        ctx.fillStyle = "#f8fafc";
-        ctx.globalAlpha = isBlackout
-          ? (0.65 + 0.35 * depth) * visAlpha
-          : 0.9 * visAlpha;
+        ctx.strokeStyle = color;
+        ctx.shadowColor = color;
         ctx.beginPath();
-        ctx.arc(px, py, Math.max(1.4, radius * 0.38), 0, Math.PI * 2);
-        ctx.fill();
+        ctx.moveTo(projectX(a.x), projectY(a.y));
+        ctx.lineTo(projectX(b.x), projectY(b.y));
+        ctx.stroke();
       }
-    }
-    ctx.restore();
-  }
 
-  // V2 Layer: Detailed Face, Eyes, Irises & 3D Head Shape
-  if (faceLandmarks && faceLandmarks.length >= 468) {
-    drawFaceAndHeadLayer(
-      ctx,
-      faceLandmarks,
-      landmarks,
-      projectX,
-      projectY,
-      isBlackout,
-      showFaceMesh,
-    );
-  }
+      const indices = pLandmarks
+        .map((_, idx) => idx)
+        .filter((idx) => !shouldSkipPoseLandmark(idx));
+      if (isBlackout) {
+        indices.sort((i1, i2) => {
+          const z1 = Number.isFinite(pLandmarks[i1]?.z)
+            ? pLandmarks[i1]!.z
+            : 0;
+          const z2 = Number.isFinite(pLandmarks[i2]?.z)
+            ? pLandmarks[i2]!.z
+            : 0;
+          return z2 - z1;
+        });
+      }
 
-  // V2 Layer: Detailed Hands & 5-Finger Articulation
-  if (hands && hands.length > 0) {
-    drawHandsLayer(
-      ctx,
-      hands,
-      landmarks,
-      projectX,
-      projectY,
-      width,
-      height,
-      isBlackout,
-    );
-  }
+      for (const idx of indices) {
+        const lm = pLandmarks[idx];
+        if (!lm || !Number.isFinite(lm.x) || !Number.isFinite(lm.y)) continue;
+        const vis = getVisibility(lm);
+        if (vis <= 0.02) continue;
 
-  // Joint angle pills (upright, unflipped, clamped within canvas bounds)
-  if (!landmarks || landmarks.length === 0 || selectedJoints.length === 0) {
-    return;
-  }
+        const px = projectX(lm.x);
+        const py = projectY(lm.y);
+        const color = landmarkColor(idx, pId);
+        const visAlpha = visibilityAlpha(vis, dimThreshold);
+        const depth = computeDepthFactor(lm.z);
+        const radius = isBlackout ? 3.0 + depth * 6.0 : 4.5;
 
-  ctx.save();
-  ctx.shadowBlur = 0;
-  ctx.globalAlpha = 1;
-  ctx.font =
-    "600 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
+        ctx.fillStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = isBlackout ? 3 + depth * 16 : 10;
+        ctx.globalAlpha = isBlackout
+          ? (0.55 + 0.45 * depth) * visAlpha
+          : 0.9 * visAlpha;
 
-  const margin = 4;
-  const padX = 6;
-  const pillH = 20;
+        ctx.beginPath();
+        ctx.arc(px, py, radius, 0, Math.PI * 2);
+        ctx.fill();
 
-  for (const jointId of selectedJoints) {
-    const def = JOINT_DEFINITION_MAP[jointId];
-    if (!def) continue;
-    const deg = angles[jointId];
-    if (deg === undefined || deg === null || !Number.isFinite(deg)) continue;
-
-    const vertex = landmarks[def.indices[1]];
-    if (!vertex || !Number.isFinite(vertex.x) || !Number.isFinite(vertex.y)) {
-      continue;
+        if (vis >= dimThreshold) {
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = "#f8fafc";
+          ctx.globalAlpha = isBlackout
+            ? (0.65 + 0.35 * depth) * visAlpha
+            : 0.9 * visAlpha;
+          ctx.beginPath();
+          ctx.arc(px, py, Math.max(1.4, radius * 0.38), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
     }
 
-    const vx = projectX(vertex.x);
-    const vy = projectY(vertex.y);
-    const rounded = Math.round(deg);
-    const label = `${rounded === 0 ? 0 : rounded}°`;
-    const measured =
-      typeof ctx.measureText === "function"
-        ? ctx.measureText(label).width
-        : label.length * 7;
-    const textW =
-      Number.isFinite(measured) && measured > 0 ? measured : label.length * 7;
-    const pillW = Math.max(38, Math.ceil(textW) + padX * 2);
-
-    const rawX = vx + 10 + pillW + margin <= width ? vx + 10 : vx - 10 - pillW;
-    const rawY = vy - pillH - 8 >= margin ? vy - pillH - 8 : vy + 10;
-    const boxX =
-      width >= pillW + margin * 2
-        ? Math.max(margin, Math.min(width - pillW - margin, rawX))
-        : Math.max(0, (width - pillW) / 2);
-    const boxY =
-      height >= pillH + margin * 2
-        ? Math.max(margin, Math.min(height - pillH - margin, rawY))
-        : Math.max(0, (height - pillH) / 2);
-
-    const accent = def.side === "left" ? COLOR_LEFT : COLOR_RIGHT;
-    ctx.fillStyle = "rgba(5, 8, 15, 0.86)";
-    ctx.strokeStyle = accent;
-    ctx.lineWidth = 1;
-
-    if (typeof ctx.roundRect === "function") {
-      ctx.beginPath();
-      ctx.roundRect(boxX, boxY, pillW, pillH, 5);
-      ctx.fill();
-      ctx.stroke();
-    } else {
-      ctx.fillRect(boxX, boxY, pillW, pillH);
-      ctx.strokeRect(boxX, boxY, pillW, pillH);
+    // V2 Layer: Detailed Face, Eyes, Irises & 3D Head Shape
+    if (pFace && pFace.length >= 468) {
+      drawFaceAndHeadLayer(
+        ctx,
+        pFace,
+        pLandmarks,
+        projectX,
+        projectY,
+        isBlackout,
+        showFaceMesh,
+        pId,
+      );
     }
 
-    ctx.fillStyle = "#f8fafc";
-    ctx.fillText(label, boxX + pillW / 2, boxY + pillH / 2 + 0.5);
+    // V2 Layer: Detailed Hands & 5-Finger Articulation
+    if (pHands && pHands.length > 0) {
+      drawHandsLayer(
+        ctx,
+        pHands,
+        pLandmarks,
+        projectX,
+        projectY,
+        width,
+        height,
+        isBlackout,
+        pId,
+        isMultiPersonActive,
+      );
+    }
+
+    // Multi-person Subject Beacon (P1 / P2) when 2 people are detected
+    if (isMultiPersonActive && pLandmarks && pLandmarks.length > 0) {
+      drawPersonBeacon(
+        ctx,
+        pId,
+        pLandmarks,
+        pFace,
+        projectX,
+        projectY,
+        width,
+        height,
+      );
+    }
+
+    // Joint angle pills (upright, unflipped, clamped within canvas bounds)
+    if (pLandmarks && pLandmarks.length > 0 && selectedJoints.length > 0) {
+      ctx.save();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
+      ctx.font =
+        "600 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      const margin = 4;
+      const padX = 6;
+      const pillH = 20;
+
+      for (const jointId of selectedJoints) {
+        const def = JOINT_DEFINITION_MAP[jointId];
+        if (!def) continue;
+        const deg = pAngles[jointId];
+        if (deg === undefined || deg === null || !Number.isFinite(deg))
+          continue;
+
+        const vertex = pLandmarks[def.indices[1]];
+        if (!vertex || !Number.isFinite(vertex.x) || !Number.isFinite(vertex.y)) {
+          continue;
+        }
+
+        const vx = projectX(vertex.x);
+        const vy = projectY(vertex.y);
+        const rounded = Math.round(deg);
+        const label = `${rounded === 0 ? 0 : rounded}°`;
+        const measured =
+          typeof ctx.measureText === "function"
+            ? ctx.measureText(label).width
+            : label.length * 7;
+        const textW =
+          Number.isFinite(measured) && measured > 0
+            ? measured
+            : label.length * 7;
+        const pillW = Math.max(38, Math.ceil(textW) + padX * 2);
+
+        const rawX =
+          vx + 10 + pillW + margin <= width ? vx + 10 : vx - 10 - pillW;
+        const rawY = vy - pillH - 8 >= margin ? vy - pillH - 8 : vy + 10;
+        const boxX =
+          width >= pillW + margin * 2
+            ? Math.max(margin, Math.min(width - pillW - margin, rawX))
+            : Math.max(0, (width - pillW) / 2);
+        const boxY =
+          height >= pillH + margin * 2
+            ? Math.max(margin, Math.min(height - pillH - margin, rawY))
+            : Math.max(0, (height - pillH) / 2);
+
+        const accent =
+          pId === 1
+            ? def.side === "left"
+              ? P2_COLOR_LEFT
+              : P2_COLOR_RIGHT
+            : def.side === "left"
+              ? COLOR_LEFT
+              : COLOR_RIGHT;
+        ctx.fillStyle = "rgba(5, 8, 15, 0.86)";
+        ctx.strokeStyle = accent;
+        ctx.lineWidth = 1;
+
+        if (typeof ctx.roundRect === "function") {
+          ctx.beginPath();
+          ctx.roundRect(boxX, boxY, pillW, pillH, 5);
+          ctx.fill();
+          ctx.stroke();
+        } else {
+          ctx.fillRect(boxX, boxY, pillW, pillH);
+          ctx.strokeRect(boxX, boxY, pillW, pillH);
+        }
+
+        ctx.fillStyle = "#f8fafc";
+        ctx.fillText(label, boxX + pillW / 2, boxY + pillH / 2 + 0.5);
+      }
+      ctx.restore();
+    }
   }
-  ctx.restore();
 }
 
 function computeContainBox(
@@ -1258,6 +1437,7 @@ export function SkeletonCanvas({
   landmarks,
   hands = [],
   faceLandmarks = null,
+  persons,
   showFaceMesh = true,
   angles,
   selectedJoints,
@@ -1273,6 +1453,7 @@ export function SkeletonCanvas({
     landmarks,
     hands,
     faceLandmarks,
+    persons,
     showFaceMesh,
     angles,
     selectedJoints,
@@ -1425,6 +1606,7 @@ export function SkeletonCanvas({
       landmarks,
       hands,
       faceLandmarks,
+      persons,
       showFaceMesh,
       angles,
       selectedJoints,
@@ -1455,6 +1637,7 @@ export function SkeletonCanvas({
     landmarks,
     hands,
     faceLandmarks,
+    persons,
     showFaceMesh,
     angles,
     selectedJoints,

@@ -83,12 +83,15 @@ export interface PoseEngineOptions {
   wasmBasePath?: string; // defaults to "/wasm"
   enableHands?: boolean;
   enableFace?: boolean;
+  maxPoses?: 1 | 2; // defaults to 2 for dual-person tracking
 }
 
 export interface InferenceFrameResult {
   landmarks: Point3D[] | null;
+  poses?: Point3D[][];
   hands?: TrackedHand[];
   faceLandmarks?: Point3D[] | null;
+  faces?: Point3D[][];
   inferenceMs: number;
   delegate: DelegateType;
 }
@@ -289,6 +292,11 @@ export class PoseEngine {
 
   private enableHands = true;
   private enableFace = true;
+  private maxPoses: 1 | 2 = 2;
+  private auxFrameParity = 0;
+  private lastTotalInferenceMs = 0;
+  private cachedHands: TrackedHand[] = [];
+  private cachedFaces: Point3D[][] = [];
 
   constructor(deps: PoseEngineDeps = {}) {
     ensureMediaPipeConsoleFilter();
@@ -340,19 +348,51 @@ export class PoseEngine {
     this.now = deps.now ?? (() => performance.now());
   }
 
-  setDetailModules(config: { enableHands?: boolean; enableFace?: boolean }): void {
+  setDetailModules(config: {
+    enableHands?: boolean;
+    enableFace?: boolean;
+    maxPoses?: 1 | 2;
+  }): void {
     if (config.enableHands !== undefined) {
       this.enableHands = Boolean(config.enableHands);
+      if (!this.enableHands) {
+        this.cachedHands = [];
+      }
     }
     if (config.enableFace !== undefined) {
       this.enableFace = Boolean(config.enableFace);
+      if (!this.enableFace) {
+        this.cachedFaces = [];
+      }
+    }
+    if (config.maxPoses !== undefined) {
+      const nextMax: 1 | 2 = config.maxPoses === 1 ? 1 : 2;
+      if (nextMax !== this.maxPoses) {
+        this.maxPoses = nextMax;
+        if (!this.disposed && this.landmarker) {
+          try {
+            void Promise.resolve(
+              this.landmarker.setOptions({ numPoses: this.maxPoses }),
+            ).catch(() => {
+              /* ignore runtime setOptions errors */
+            });
+          } catch {
+            /* ignore sync setOptions errors */
+          }
+        }
+      }
     }
   }
 
-  getDetailModules(): { enableHands: boolean; enableFace: boolean } {
+  getDetailModules(): {
+    enableHands: boolean;
+    enableFace: boolean;
+    maxPoses: 1 | 2;
+  } {
     return {
       enableHands: this.enableHands,
       enableFace: this.enableFace,
+      maxPoses: this.maxPoses,
     };
   }
 
@@ -374,6 +414,9 @@ export class PoseEngine {
     }
     if (options.enableFace !== undefined) {
       this.enableFace = Boolean(options.enableFace);
+    }
+    if (options.maxPoses !== undefined) {
+      this.maxPoses = options.maxPoses === 1 ? 1 : 2;
     }
 
     const token = ++this.loadToken;
@@ -558,8 +601,41 @@ export class PoseEngine {
     try {
       result = this.landmarker.detectForVideo(video, safeTimestampMs);
 
-      let hands: TrackedHand[] = [];
-      if (this.enableHands && this.handLandmarker) {
+      const rawPosesList = result?.landmarks ?? [];
+      const allPoses: Point3D[][] = [];
+      const poseLimit = Math.min(this.maxPoses, rawPosesList.length);
+      for (let i = 0; i < poseLimit; i++) {
+        const rp = rawPosesList[i];
+        if (rp && rp.length > 0) {
+          allPoses.push(toPoint3DArray(rp));
+        }
+      }
+
+      // Adaptive Frame Interleaving Optimization:
+      // When 2 people are detected or auxiliary inference load is high (>= 18ms),
+      // alternate HandLandmarker (numHands: 4) and FaceLandmarker (numFaces: 2)
+      // on even/odd frames while serving cached results on the off-frame.
+      const bothAuxActive =
+        this.enableHands &&
+        this.handLandmarker !== null &&
+        this.enableFace &&
+        this.faceLandmarker !== null;
+      const shouldInterleaveAux =
+        bothAuxActive &&
+        (allPoses.length >= 2 || this.lastTotalInferenceMs >= 18);
+
+      const parity = this.auxFrameParity++ & 1;
+      const runHandsThisFrame =
+        this.enableHands &&
+        this.handLandmarker !== null &&
+        (!shouldInterleaveAux || parity === 0 || this.cachedHands.length === 0);
+      const runFacesThisFrame =
+        this.enableFace &&
+        this.faceLandmarker !== null &&
+        (!shouldInterleaveAux || parity === 1 || this.cachedFaces.length === 0);
+
+      let hands: TrackedHand[] = this.enableHands ? this.cachedHands : [];
+      if (runHandsThisFrame && this.handLandmarker) {
         try {
           const safeHandTs =
             safeTimestampMs > this.lastHandTimestampMs
@@ -568,13 +644,15 @@ export class PoseEngine {
           this.lastHandTimestampMs = safeHandTs;
           const handRes = this.handLandmarker.detectForVideo(video, safeHandTs);
           hands = extractTrackedHands(handRes);
+          this.cachedHands = hands;
         } catch {
           hands = [];
+          this.cachedHands = [];
         }
       }
 
-      let faceLandmarks: Point3D[] | null = null;
-      if (this.enableFace && this.faceLandmarker) {
+      let faces: Point3D[][] = this.enableFace ? this.cachedFaces : [];
+      if (runFacesThisFrame && this.faceLandmarker) {
         try {
           const safeFaceTs =
             safeTimestampMs > this.lastFaceTimestampMs
@@ -582,29 +660,40 @@ export class PoseEngine {
               : this.lastFaceTimestampMs + 1;
           this.lastFaceTimestampMs = safeFaceTs;
           const faceRes = this.faceLandmarker.detectForVideo(video, safeFaceTs);
-          const rawFace = faceRes?.faceLandmarks?.[0];
-          if (rawFace && rawFace.length > 0) {
-            faceLandmarks = toPoint3DArray(rawFace);
+          const rawFacesList = faceRes?.faceLandmarks ?? [];
+          const nextFaces: Point3D[][] = [];
+          const faceLimit = Math.min(this.maxPoses, rawFacesList.length);
+          for (let i = 0; i < faceLimit; i++) {
+            const rf = rawFacesList[i];
+            if (rf && rf.length > 0) {
+              nextFaces.push(toPoint3DArray(rf));
+            }
           }
+          faces = nextFaces;
+          this.cachedFaces = nextFaces;
         } catch {
-          faceLandmarks = null;
+          faces = [];
+          this.cachedFaces = [];
         }
       }
+
+      const faceLandmarks: Point3D[] | null = faces[0] ?? null;
 
       const t1 = this.now();
       const rawDuration = t1 - t0;
       const inferenceMs = Number.isFinite(rawDuration)
         ? Math.max(0, rawDuration)
         : 0;
+      this.lastTotalInferenceMs = inferenceMs;
 
-      const rawPose = result?.landmarks?.[0];
-      const landmarks =
-        rawPose && rawPose.length > 0 ? toPoint3DArray(rawPose) : null;
+      const landmarks = allPoses[0] ?? null;
 
       return {
         landmarks,
+        ...(allPoses.length > 1 ? { poses: allPoses } : {}),
         ...(hands.length > 0 ? { hands } : {}),
         ...(faceLandmarks !== null ? { faceLandmarks } : {}),
+        ...(faces.length > 1 ? { faces } : {}),
         inferenceMs,
         delegate,
       };
@@ -705,6 +794,8 @@ export class PoseEngine {
     this.faceLandmarker = null;
     this.lastHandTimestampMs = -1;
     this.lastFaceTimestampMs = -1;
+    this.cachedHands = [];
+    this.cachedFaces = [];
     safeClose(prevHand);
     safeClose(prevFace);
   }
@@ -758,7 +849,7 @@ export class PoseEngine {
             delegate,
           },
           runningMode: "VIDEO",
-          numHands: 2,
+          numHands: 4,
           minHandDetectionConfidence: 0.45,
           minHandPresenceConfidence: 0.45,
           minTrackingConfidence: 0.45,
@@ -795,7 +886,7 @@ export class PoseEngine {
             delegate,
           },
           runningMode: "VIDEO",
-          numFaces: 1,
+          numFaces: 2,
           minFaceDetectionConfidence: 0.45,
           minFacePresenceConfidence: 0.45,
           minTrackingConfidence: 0.45,
@@ -845,7 +936,7 @@ export class PoseEngine {
         delegate,
       },
       runningMode: "VIDEO",
-      numPoses: 1,
+      numPoses: this.maxPoses,
       minPoseDetectionConfidence: options.minPoseDetectionConfidence,
       minPosePresenceConfidence: options.minPosePresenceConfidence,
       minTrackingConfidence: options.minTrackingConfidence,

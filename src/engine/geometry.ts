@@ -2,6 +2,7 @@ export type ModelVariant = "lite" | "full" | "heavy";
 export type DelegateType = "GPU" | "CPU";
 export type ViewMode = "overlay" | "blackout";
 export type HandednessType = "Left" | "Right";
+export type PersonId = 0 | 1;
 
 export type AppStatus =
   | "requesting-camera"
@@ -40,12 +41,26 @@ export interface DetailModulesConfig {
   enableHands: boolean;
   enableFace: boolean;
   showFaceMesh: boolean;
+  maxPoses?: 1 | 2;
 }
 
 export interface TrackedHand {
   handedness: HandednessType;
   score: number;
   landmarks: Point3D[]; // 21 landmarks (indices 0..20)
+  personId?: PersonId;
+}
+
+export interface TrackedPerson {
+  personId: PersonId;
+  label: "P1" | "P2";
+  landmarks: Point3D[]; // 33 body landmarks
+  angles: Partial<Record<JointId, number | null>>;
+  hands: TrackedHand[];
+  handMetrics: HandTelemetry[];
+  faceLandmarks: Point3D[] | null;
+  faceHeadMetrics: FaceHeadMetrics | null;
+  centroid: { x: number; y: number };
 }
 
 export interface FingerAngles {
@@ -112,6 +127,16 @@ export interface PoseSnapshot {
   handMetrics?: HandTelemetry[];
   faceLandmarksCount?: number;
   faceHeadMetrics?: FaceHeadMetrics | null;
+  personsCount?: number;
+  persons?: Array<{
+    personId: PersonId;
+    label: "P1" | "P2";
+    landmarks: SnapshotLandmark[];
+    activeJointAngles: SnapshotJointAngle[];
+    handsCount: number;
+    faceDetected: boolean;
+    faceHeadMetrics: FaceHeadMetrics | null;
+  }>;
 }
 
 export interface BuildSnapshotParams {
@@ -124,6 +149,7 @@ export interface BuildSnapshotParams {
   timestampMs?: number;
   hands?: readonly TrackedHand[];
   faceLandmarks?: readonly Point3D[] | null;
+  persons?: readonly TrackedPerson[];
 }
 
 export const POSE_LANDMARK_NAMES: readonly string[] = [
@@ -795,9 +821,369 @@ export function buildPoseSnapshot(params: BuildSnapshotParams): PoseSnapshot {
     snapshot.faceHeadMetrics = computeFaceHeadMetrics(params.faceLandmarks);
   }
 
+  if (params.persons !== undefined) {
+    snapshot.personsCount = params.persons.length;
+    snapshot.persons = params.persons.map((person) => {
+      const personLandmarks: SnapshotLandmark[] = [];
+      for (let i = 0; i < LANDMARK_COUNT; i++) {
+        const lm = person.landmarks[i];
+        const vis =
+          lm && lm.visibility !== undefined && Number.isFinite(lm.visibility)
+            ? Math.max(0, Math.min(1, lm.visibility === 0 ? 0 : lm.visibility))
+            : 0;
+        personLandmarks.push({
+          index: i,
+          name: POSE_LANDMARK_NAMES[i] ?? `landmark_${i}`,
+          x: toFiniteCoord(lm?.x),
+          y: toFiniteCoord(lm?.y),
+          z: toFiniteCoord(lm?.z),
+          visibility: vis,
+        });
+      }
+      const pAngles: SnapshotJointAngle[] = [];
+      for (const jointId of params.selectedJoints) {
+        const def = JOINT_DEFINITION_MAP[jointId];
+        if (!def) continue;
+        const rawDeg = person.angles[jointId];
+        const degrees =
+          rawDeg !== undefined && rawDeg !== null && Number.isFinite(rawDeg)
+            ? rawDeg === 0
+              ? 0
+              : rawDeg
+            : null;
+        pAngles.push({
+          joint: jointId,
+          label: def.label,
+          degrees,
+        });
+      }
+      return {
+        personId: person.personId,
+        label: person.label,
+        landmarks: personLandmarks,
+        activeJointAngles: pAngles,
+        handsCount: person.hands.length,
+        faceDetected: Boolean(
+          person.faceLandmarks && person.faceLandmarks.length >= 468,
+        ),
+        faceHeadMetrics: person.faceHeadMetrics,
+      };
+    });
+  }
+
   return snapshot;
 }
 
 export function serializePoseSnapshot(params: BuildSnapshotParams): string {
   return JSON.stringify(buildPoseSnapshot(params), null, 2);
+}
+
+const TORSO_ANCHOR_INDICES = [11, 12, 23, 24, 0] as const;
+
+export function computePoseCentroid(
+  landmarks: readonly Point3D[],
+): { x: number; y: number } {
+  let sumX = 0;
+  let sumY = 0;
+  let count = 0;
+
+  for (const idx of TORSO_ANCHOR_INDICES) {
+    const pt = landmarks[idx];
+    if (
+      pt &&
+      Number.isFinite(pt.x) &&
+      Number.isFinite(pt.y) &&
+      (pt.visibility === undefined || pt.visibility >= 0.2)
+    ) {
+      sumX += pt.x;
+      sumY += pt.y;
+      count += 1;
+    }
+  }
+
+  if (count > 0) {
+    return { x: sumX / count, y: sumY / count };
+  }
+
+  for (let i = 0; i < landmarks.length; i++) {
+    const pt = landmarks[i];
+    if (pt && Number.isFinite(pt.x) && Number.isFinite(pt.y)) {
+      sumX += pt.x;
+      sumY += pt.y;
+      count += 1;
+    }
+  }
+
+  return count > 0 ? { x: sumX / count, y: sumY / count } : { x: 0.5, y: 0.5 };
+}
+
+function distSq2D(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy;
+}
+
+function computeHeadAnchor(landmarks: readonly Point3D[]): {
+  x: number;
+  y: number;
+} {
+  const nose = landmarks[0];
+  if (nose && Number.isFinite(nose.x) && Number.isFinite(nose.y)) {
+    return { x: nose.x, y: nose.y };
+  }
+  const lSh = landmarks[11];
+  const rSh = landmarks[12];
+  if (
+    lSh &&
+    rSh &&
+    Number.isFinite(lSh.x) &&
+    Number.isFinite(lSh.y) &&
+    Number.isFinite(rSh.x) &&
+    Number.isFinite(rSh.y)
+  ) {
+    return {
+      x: (lSh.x + rSh.x) * 0.5,
+      y: (lSh.y + rSh.y) * 0.5 - 0.12,
+    };
+  }
+  return computePoseCentroid(landmarks);
+}
+
+function computeHandDistanceToPerson(
+  handWrist: Point3D,
+  personLandmarks: readonly Point3D[],
+  personCentroid: { x: number; y: number },
+): number {
+  let best = distSq2D(handWrist, personCentroid);
+  for (const wristIdx of [15, 16, 17, 18, 19, 20] as const) {
+    const pw = personLandmarks[wristIdx];
+    if (
+      pw &&
+      Number.isFinite(pw.x) &&
+      Number.isFinite(pw.y) &&
+      (pw.visibility === undefined || pw.visibility >= 0.15)
+    ) {
+      const d = distSq2D(handWrist, pw);
+      if (d < best) {
+        best = d;
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Multi-person tracker & spatial associator for up to 2 simultaneous people.
+ * Guarantees temporal ID stability (P1 vs P2), per-person One-Euro smoothing,
+ * and spatial binding of up to 4 hands and 2 478-point face meshes.
+ */
+export class MultiPersonTracker {
+  private readonly poseSmoothers: [PoseSmoother, PoseSmoother] = [
+    new PoseSmoother(),
+    new PoseSmoother(),
+  ];
+  private readonly faceSmoothers: [PoseSmoother, PoseSmoother] = [
+    new PoseSmoother(),
+    new PoseSmoother(),
+  ];
+  private readonly handSmoothers: Map<string, PoseSmoother> = new Map();
+  private prevCentroids: Map<PersonId, { x: number; y: number }> = new Map();
+
+  reset(): void {
+    this.poseSmoothers[0].reset();
+    this.poseSmoothers[1].reset();
+    this.faceSmoothers[0].reset();
+    this.faceSmoothers[1].reset();
+    for (const s of this.handSmoothers.values()) {
+      s.reset();
+    }
+    this.handSmoothers.clear();
+    this.prevCentroids.clear();
+  }
+
+  private getHandSmoother(key: string): PoseSmoother {
+    let smoother = this.handSmoothers.get(key);
+    if (!smoother) {
+      smoother = new PoseSmoother();
+      this.handSmoothers.set(key, smoother);
+    }
+    return smoother;
+  }
+
+  update(params: {
+    poses: readonly (readonly Point3D[])[];
+    hands: readonly TrackedHand[];
+    faces: readonly (readonly Point3D[])[];
+    selectedJoints: readonly JointId[];
+    timestampMs: number;
+    smoothing: SmoothingConfig;
+  }): TrackedPerson[] {
+    const validPoses = params.poses
+      .filter((p) => p && p.length >= LANDMARK_COUNT)
+      .slice(0, 2);
+
+    if (validPoses.length === 0) {
+      this.prevCentroids.clear();
+      return [];
+    }
+
+    const rawCentroids = validPoses.map((p) => computePoseCentroid(p));
+    let assignedIds: PersonId[];
+
+    if (validPoses.length === 1) {
+      const c0 = rawCentroids[0]!;
+      const prev0 = this.prevCentroids.get(0);
+      const prev1 = this.prevCentroids.get(1);
+      if (prev0 && prev1) {
+        const d0 = distSq2D(c0, prev0);
+        const d1 = distSq2D(c0, prev1);
+        assignedIds = [d1 < d0 * 0.7 ? 1 : 0];
+      } else {
+        assignedIds = [0];
+      }
+    } else {
+      const cA = rawCentroids[0]!;
+      const cB = rawCentroids[1]!;
+      const prev0 = this.prevCentroids.get(0);
+      const prev1 = this.prevCentroids.get(1);
+
+      if (prev0 && prev1) {
+        const costKeep = distSq2D(cA, prev0) + distSq2D(cB, prev1);
+        const costSwap = distSq2D(cA, prev1) + distSq2D(cB, prev0);
+        assignedIds = costSwap < costKeep ? [1, 0] : [0, 1];
+      } else if (prev0) {
+        const dA = distSq2D(cA, prev0);
+        const dB = distSq2D(cB, prev0);
+        assignedIds = dB < dA ? [1, 0] : [0, 1];
+      } else {
+        // Initial 2-person acquisition: sort left-to-right in camera space
+        assignedIds = cA.x <= cB.x ? [0, 1] : [1, 0];
+      }
+    }
+
+    const nextCentroids = new Map<PersonId, { x: number; y: number }>();
+    const personEntries: Array<{
+      personId: PersonId;
+      landmarks: Point3D[];
+      centroid: { x: number; y: number };
+      headAnchor: { x: number; y: number };
+    }> = [];
+
+    for (let i = 0; i < validPoses.length; i++) {
+      const pid = assignedIds[i]!;
+      const smoothedPose = this.poseSmoothers[pid].filter(
+        validPoses[i]!,
+        params.timestampMs,
+        params.smoothing,
+      );
+      const centroid = computePoseCentroid(smoothedPose);
+      const headAnchor = computeHeadAnchor(smoothedPose);
+      nextCentroids.set(pid, centroid);
+      personEntries.push({
+        personId: pid,
+        landmarks: smoothedPose,
+        centroid,
+        headAnchor,
+      });
+    }
+
+    // Sort output so P1 (0) is always before P2 (1) when both are present
+    personEntries.sort((a, b) => a.personId - b.personId);
+    this.prevCentroids = nextCentroids;
+
+    // Associate detected 478-point Faces (up to 2) to closest person headAnchor
+    const assignedFaces = new Map<PersonId, Point3D[]>();
+    const validFaces = params.faces
+      .filter((f) => f && f.length >= 468)
+      .slice(0, 2);
+    const usedPersonForFace = new Set<PersonId>();
+
+    for (const rawFace of validFaces) {
+      const nosePt = rawFace[1] ?? rawFace[0]!;
+      let bestPid: PersonId | null = null;
+      let bestDist = Number.POSITIVE_INFINITY;
+
+      for (const pe of personEntries) {
+        if (usedPersonForFace.has(pe.personId)) continue;
+        const d = distSq2D(nosePt, pe.headAnchor);
+        if (d < bestDist) {
+          bestDist = d;
+          bestPid = pe.personId;
+        }
+      }
+
+      if (bestPid !== null) {
+        usedPersonForFace.add(bestPid);
+        const smoothedFace = this.faceSmoothers[bestPid].filter(
+          rawFace,
+          params.timestampMs,
+          params.smoothing,
+        );
+        assignedFaces.set(bestPid, smoothedFace);
+      }
+    }
+
+    // Associate detected 21-point Hands (up to 4) to closest person wrist/torso
+    const assignedHands = new Map<PersonId, TrackedHand[]>();
+    for (const pe of personEntries) {
+      assignedHands.set(pe.personId, []);
+    }
+
+    const slotCounters = new Map<string, number>();
+    for (const rawHand of params.hands) {
+      if (!rawHand.landmarks || rawHand.landmarks.length < 21) continue;
+      const wristPt = rawHand.landmarks[0]!;
+
+      let bestPid: PersonId = personEntries[0]!.personId;
+      let bestDist = Number.POSITIVE_INFINITY;
+      for (const pe of personEntries) {
+        const d = computeHandDistanceToPerson(
+          wristPt,
+          pe.landmarks,
+          pe.centroid,
+        );
+        if (d < bestDist) {
+          bestDist = d;
+          bestPid = pe.personId;
+        }
+      }
+
+      const baseKey = `${bestPid}-${rawHand.handedness}`;
+      const occ = slotCounters.get(baseKey) ?? 0;
+      slotCounters.set(baseKey, occ + 1);
+      const smootherKey = `${baseKey}-${occ}`;
+      const smoothedHandLms = this.getHandSmoother(smootherKey).filter(
+        rawHand.landmarks,
+        params.timestampMs,
+        params.smoothing,
+      );
+
+      assignedHands.get(bestPid)?.push({
+        handedness: rawHand.handedness,
+        score: rawHand.score,
+        landmarks: smoothedHandLms,
+        personId: bestPid,
+      });
+    }
+
+    return personEntries.map((pe) => {
+      const pid = pe.personId;
+      const personHands = assignedHands.get(pid) ?? [];
+      const personFace = assignedFaces.get(pid) ?? null;
+      return {
+        personId: pid,
+        label: pid === 0 ? "P1" : "P2",
+        landmarks: pe.landmarks,
+        angles: computeJointAngles(pe.landmarks, params.selectedJoints),
+        hands: personHands,
+        handMetrics: personHands.map((h) => computeHandMetrics(h)),
+        faceLandmarks: personFace,
+        faceHeadMetrics: computeFaceHeadMetrics(personFace),
+        centroid: pe.centroid,
+      };
+    });
+  }
 }

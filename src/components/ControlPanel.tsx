@@ -11,6 +11,7 @@ import {
   ScanFace,
   Sliders,
   Sparkles,
+  Users,
 } from "lucide-react";
 import type { ReactElement } from "react";
 import {
@@ -22,6 +23,7 @@ import {
   type JointId,
   type ModelVariant,
   type SmoothingConfig,
+  type TrackedPerson,
   type ViewMode,
 } from "../engine/geometry";
 
@@ -33,6 +35,7 @@ export interface TelemetryMetrics {
   delegate: DelegateType | null;
   detectedHandsCount?: number;
   faceLandmarksCount?: number;
+  detectedPersonsCount?: number;
 }
 
 export interface ControlPanelProps {
@@ -55,6 +58,7 @@ export interface ControlPanelProps {
   onDetailModulesChange?: (config: DetailModulesConfig) => void;
   handMetrics?: readonly HandTelemetry[];
   faceHeadMetrics?: FaceHeadMetrics | null;
+  persons?: readonly TrackedPerson[];
   selectedJoints: readonly JointId[];
   onToggleJoint: (jointId: JointId) => void;
   angles: Partial<Record<JointId, number | null>>;
@@ -65,6 +69,7 @@ const DEFAULT_DETAIL_MODULES: DetailModulesConfig = {
   enableHands: true,
   enableFace: true,
   showFaceMesh: true,
+  maxPoses: 2,
 };
 
 const MODEL_OPTIONS: readonly {
@@ -136,6 +141,7 @@ export function ControlPanel({
   onDetailModulesChange,
   handMetrics = [],
   faceHeadMetrics = null,
+  persons = [],
   selectedJoints,
   onToggleJoint,
   angles,
@@ -147,6 +153,9 @@ export function ControlPanel({
   const safeTracking = clampConfidenceInput(minTrackingConfidence, 0.5);
   const safeStrength = clampSmoothingStrength(smoothing.strength, 0.5);
   const activeDelegate = telemetry.delegate ?? "GPU";
+  const maxPoses: 1 | 2 = detailModules.maxPoses === 1 ? 1 : 2;
+  const detectedPersonsCount =
+    telemetry.detectedPersonsCount ?? persons.length;
 
   return (
     <aside
@@ -250,23 +259,48 @@ export function ControlPanel({
           </div>
         </section>
 
-        {/* V2 Detail Modules: Hands (21x2) & Face/Eyes/Head (478) */}
+        {/* V2 Detail Modules: Multi-Person (2P), Hands (21x4) & Face/Eyes/Head (478x2) */}
         <section className="rounded-lg border border-cyan-500/25 bg-slate-900/70 p-2.5">
           <div className="mb-2 flex items-center justify-between">
             <span className="flex items-center gap-1.5 font-mono text-[11px] font-semibold tracking-wider text-cyan-300 uppercase">
               <ScanFace className="h-3.5 w-3.5 text-cyan-400" aria-hidden="true" />
-              V2 High-Detail Tracking
+              V2 Multi-Subject Tracking
             </span>
             <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-cyan-300">
-              553 PTS
+              {maxPoses === 2 ? "2P • 1106 PTS" : "1P • 553 PTS"}
             </span>
           </div>
 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between rounded border border-slate-800/90 bg-slate-950/70 px-2 py-1.5">
               <span className="flex items-center gap-1.5 font-mono text-xs text-slate-200">
+                <Users className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+                Dual-Person Mode ({detectedPersonsCount}/{maxPoses} Active)
+              </span>
+              <button
+                type="button"
+                data-testid="toggle-multi-person"
+                aria-pressed={maxPoses === 2}
+                onClick={() =>
+                  onDetailModulesChange?.({
+                    ...detailModules,
+                    maxPoses: maxPoses === 2 ? 1 : 2,
+                  })
+                }
+                className={`rounded border px-2 py-0.5 font-mono text-[10px] font-semibold uppercase transition ${
+                  maxPoses === 2
+                    ? "border-emerald-400/70 bg-emerald-500/20 text-emerald-200"
+                    : "border-slate-700 bg-slate-900 text-slate-400"
+                }`}
+              >
+                {maxPoses === 2 ? "2 PERSONS" : "1 PERSON"}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between rounded border border-slate-800/90 bg-slate-950/70 px-2 py-1.5">
+              <span className="flex items-center gap-1.5 font-mono text-xs text-slate-200">
                 <Hand className="h-3.5 w-3.5 text-cyan-400" aria-hidden="true" />
-                Hands &amp; 5-Fingers (21×2)
+                Hands &amp; 5-Fingers (21×{maxPoses * 2})
               </span>
               <button
                 type="button"
@@ -421,7 +455,7 @@ export function ControlPanel({
               <div className="mb-1 flex items-center justify-between text-[10px] text-slate-400 uppercase">
                 <span>Finger Articulation</span>
                 <span className="text-cyan-300">
-                  {handMetrics.length} / 2 HANDS
+                  {handMetrics.length} / {maxPoses * 2} HANDS
                 </span>
               </div>
               {handMetrics.length === 0 ? (

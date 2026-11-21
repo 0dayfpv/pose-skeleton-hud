@@ -246,24 +246,37 @@ describe("ControlPanel component", () => {
     );
 
     fireEvent.click(screen.getByTestId("toggle-hands"));
-    expect(onDetailModulesChange).toHaveBeenCalledWith({
-      enableHands: false,
-      enableFace: true,
-      showFaceMesh: true,
-    });
+    expect(onDetailModulesChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enableHands: false,
+        enableFace: true,
+        showFaceMesh: true,
+      }),
+    );
 
     fireEvent.click(screen.getByTestId("toggle-face"));
-    expect(onDetailModulesChange).toHaveBeenCalledWith({
-      enableHands: true,
-      enableFace: false,
-      showFaceMesh: true,
-    });
+    expect(onDetailModulesChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enableHands: true,
+        enableFace: false,
+        showFaceMesh: true,
+      }),
+    );
 
     fireEvent.click(screen.getByTestId("toggle-face-mesh"));
-    expect(onDetailModulesChange).toHaveBeenCalledWith({
-      enableHands: true,
-      enableFace: true,
-      showFaceMesh: false,
-    });
+    expect(onDetailModulesChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enableHands: true,
+        enableFace: true,
+        showFaceMesh: false,
+      }),
+    );
+
+    fireEvent.click(screen.getByTestId("toggle-multi-person"));
+    expect(onDetailModulesChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        maxPoses: 1,
+      }),
+    );
   });
 });

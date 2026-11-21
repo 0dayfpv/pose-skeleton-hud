@@ -8,6 +8,7 @@ import {
   PanelRightOpen,
   ScanFace,
   Timer,
+  Users,
 } from "lucide-react";
 import {
   useCallback,
@@ -22,6 +23,7 @@ import SkeletonCanvas, {
 } from "./components/SkeletonCanvas";
 import {
   JOINT_DEFINITIONS,
+  MultiPersonTracker,
   PoseSmoother,
   computeFaceHeadMetrics,
   computeHandMetrics,
@@ -37,6 +39,7 @@ import {
   type Point3D,
   type SmoothingConfig,
   type TrackedHand,
+  type TrackedPerson,
   type ViewMode,
 } from "./engine/geometry";
 import {
@@ -57,6 +60,7 @@ const DEFAULT_DETAIL_MODULES: DetailModulesConfig = {
   enableHands: true,
   enableFace: true,
   showFaceMesh: true,
+  maxPoses: 2,
 };
 
 function classifyCameraError(error: unknown): {
@@ -198,6 +202,7 @@ export default function App(): ReactElement {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<PoseEngine | null>(null);
+  const multiTrackerRef = useRef<MultiPersonTracker>(new MultiPersonTracker());
   const smootherRef = useRef<PoseSmoother>(new PoseSmoother());
   const leftHandSmootherRef = useRef<PoseSmoother>(new PoseSmoother());
   const rightHandSmootherRef = useRef<PoseSmoother>(new PoseSmoother());
@@ -231,6 +236,7 @@ export default function App(): ReactElement {
   const [faceLandmarks, setFaceLandmarks] = useState<readonly Point3D[] | null>(
     null,
   );
+  const [persons, setPersons] = useState<readonly TrackedPerson[]>([]);
   const [handMetrics, setHandMetrics] = useState<readonly HandTelemetry[]>([]);
   const [faceHeadMetrics, setFaceHeadMetrics] =
     useState<FaceHeadMetrics | null>(null);
@@ -245,6 +251,7 @@ export default function App(): ReactElement {
     delegate: "GPU",
     detectedHandsCount: 0,
     faceLandmarksCount: 0,
+    detectedPersonsCount: 0,
   });
 
   // Live refs for the requestAnimationFrame loop & callbacks
@@ -261,6 +268,7 @@ export default function App(): ReactElement {
   const latestLandmarksRef = useRef<readonly Point3D[] | null>(null);
   const latestHandsRef = useRef<readonly TrackedHand[]>([]);
   const latestFaceLandmarksRef = useRef<readonly Point3D[] | null>(null);
+  const latestPersonsRef = useRef<readonly TrackedPerson[]>([]);
   const latestAnglesRef = useRef<Partial<Record<JointId, number | null>>>(
     angles,
   );
@@ -289,6 +297,7 @@ export default function App(): ReactElement {
   ]);
 
   const resetAllSmoothers = useCallback((): void => {
+    multiTrackerRef.current.reset();
     smootherRef.current.reset();
     leftHandSmootherRef.current.reset();
     rightHandSmootherRef.current.reset();
@@ -333,6 +342,7 @@ export default function App(): ReactElement {
     latestLandmarksRef.current = null;
     latestHandsRef.current = [];
     latestFaceLandmarksRef.current = null;
+    latestPersonsRef.current = [];
     latestAnglesRef.current = computeJointAngles(
       null,
       selectedJointsRef.current,
@@ -340,6 +350,7 @@ export default function App(): ReactElement {
     setLandmarks(null);
     setHands([]);
     setFaceLandmarks(null);
+    setPersons([]);
     setHandMetrics([]);
     setFaceHeadMetrics(null);
     setAngles(latestAnglesRef.current);
@@ -422,6 +433,7 @@ export default function App(): ReactElement {
         minTrackingConfidence: trackingConfRef.current,
         enableHands: detailModulesRef.current.enableHands,
         enableFace: detailModulesRef.current.enableFace,
+        maxPoses: detailModulesRef.current.maxPoses ?? 2,
       });
     } catch (modelError) {
       if (isCancelled() || isPoseEngineCancelledError(modelError)) {
@@ -530,45 +542,74 @@ export default function App(): ReactElement {
           : 0;
         frameDelegate = result.delegate;
 
-        const nextLandmarks = result.landmarks
-          ? smootherRef.current.filter(
-              result.landmarks,
-              nowMs,
-              smoothingRef.current,
-            )
-          : null;
-
-        const rawHands = result.hands ?? [];
-        const smoothedHands: TrackedHand[] = detailModulesRef.current.enableHands
-          ? rawHands.map((h) => ({
-              handedness: h.handedness,
-              score: h.score,
-              landmarks: (h.handedness === "Left"
-                ? leftHandSmootherRef.current
-                : rightHandSmootherRef.current
-              ).filter(h.landmarks, nowMs, smoothingRef.current),
-            }))
+        const maxPoses = detailModulesRef.current.maxPoses === 1 ? 1 : 2;
+        const rawPoses = (
+          result.poses ?? (result.landmarks ? [result.landmarks] : [])
+        ).slice(0, maxPoses);
+        const rawHands = detailModulesRef.current.enableHands
+          ? (result.hands ?? [])
+          : [];
+        const rawFaces = detailModulesRef.current.enableFace
+          ? (
+              result.faces ??
+              (result.faceLandmarks ? [result.faceLandmarks] : [])
+            ).slice(0, maxPoses)
           : [];
 
-        const rawFace = result.faceLandmarks ?? null;
-        const smoothedFace =
-          detailModulesRef.current.enableFace && rawFace
-            ? faceSmootherRef.current.filter(
-                rawFace,
-                nowMs,
-                smoothingRef.current,
-              )
-            : null;
+        if (rawPoses.length > 0) {
+          const trackedPersons = multiTrackerRef.current.update({
+            poses: rawPoses,
+            hands: rawHands,
+            faces: rawFaces,
+            selectedJoints: selectedJointsRef.current,
+            timestampMs: nowMs,
+            smoothing: smoothingRef.current,
+          });
+          const primary = trackedPersons[0] ?? null;
+          latestPersonsRef.current = trackedPersons;
+          latestLandmarksRef.current = primary ? primary.landmarks : null;
+          latestAnglesRef.current = primary
+            ? primary.angles
+            : computeJointAngles(null, selectedJointsRef.current);
+          latestHandsRef.current = trackedPersons.flatMap((p) => p.hands);
+          latestFaceLandmarksRef.current =
+            primary?.faceLandmarks ??
+            trackedPersons[1]?.faceLandmarks ??
+            null;
+        } else {
+          multiTrackerRef.current.reset();
+          latestPersonsRef.current = [];
+          latestLandmarksRef.current = null;
+          latestAnglesRef.current = computeJointAngles(
+            null,
+            selectedJointsRef.current,
+          );
 
-        const nextAngles = computeJointAngles(
-          nextLandmarks,
-          selectedJointsRef.current,
-        );
+          const smoothedHands: TrackedHand[] =
+            detailModulesRef.current.enableHands
+              ? rawHands.map((h) => ({
+                  handedness: h.handedness,
+                  score: h.score,
+                  landmarks: (h.handedness === "Left"
+                    ? leftHandSmootherRef.current
+                    : rightHandSmootherRef.current
+                  ).filter(h.landmarks, nowMs, smoothingRef.current),
+                }))
+              : [];
 
-        latestLandmarksRef.current = nextLandmarks;
-        latestHandsRef.current = smoothedHands;
-        latestFaceLandmarksRef.current = smoothedFace;
-        latestAnglesRef.current = nextAngles;
+          const rawFace0 = rawFaces[0] ?? null;
+          const smoothedFace =
+            detailModulesRef.current.enableFace && rawFace0
+              ? faceSmootherRef.current.filter(
+                  rawFace0,
+                  nowMs,
+                  smoothingRef.current,
+                )
+              : null;
+
+          latestHandsRef.current = smoothedHands;
+          latestFaceLandmarksRef.current = smoothedFace;
+        }
       }
 
       // Synchronized canvas draw
@@ -600,6 +641,7 @@ export default function App(): ReactElement {
               faceLandmarks: detailModulesRef.current.enableFace
                 ? latestFaceLandmarksRef.current
                 : null,
+              persons: latestPersonsRef.current,
               showFaceMesh: detailModulesRef.current.showFaceMesh,
               angles: latestAnglesRef.current,
               selectedJoints: selectedJointsRef.current,
@@ -617,6 +659,7 @@ export default function App(): ReactElement {
       ) {
         lastHudCommitMs = nowMs;
         const currentLandmarks = latestLandmarksRef.current;
+        const currentPersons = latestPersonsRef.current;
         const currentHands = detailModulesRef.current.enableHands
           ? latestHandsRef.current
           : [];
@@ -625,6 +668,10 @@ export default function App(): ReactElement {
           : null;
         const currentAngles = latestAnglesRef.current;
         const visibleCount = countVisibleLandmarks(currentLandmarks);
+        const totalFacePoints = currentPersons.reduce(
+          (acc, p) => acc + (p.faceLandmarks?.length ?? 0),
+          0,
+        ) || (currentFace?.length ?? 0);
         const safeFps = Number.isFinite(smoothedFps)
           ? Math.max(1, Math.min(240, Math.round(smoothedFps)))
           : 30;
@@ -632,6 +679,7 @@ export default function App(): ReactElement {
         setLandmarks(currentLandmarks);
         setHands(currentHands);
         setFaceLandmarks(currentFace);
+        setPersons(currentPersons);
         setHandMetrics(currentHands.map((h) => computeHandMetrics(h)));
         setFaceHeadMetrics(computeFaceHeadMetrics(currentFace));
         setAngles(currentAngles);
@@ -642,7 +690,8 @@ export default function App(): ReactElement {
           totalLandmarks: 33,
           delegate: frameDelegate,
           detectedHandsCount: currentHands.length,
-          faceLandmarksCount: currentFace?.length ?? 0,
+          faceLandmarksCount: totalFacePoints,
+          detectedPersonsCount: currentPersons.length,
         });
       }
 
@@ -763,17 +812,24 @@ export default function App(): ReactElement {
 
   const handleDetailModulesChange = useCallback(
     (nextModules: DetailModulesConfig): void => {
+      const nextMaxPoses: 1 | 2 = nextModules.maxPoses === 1 ? 1 : 2;
       const normalized: DetailModulesConfig = {
         enableHands: Boolean(nextModules.enableHands),
         enableFace: Boolean(nextModules.enableFace),
         showFaceMesh: Boolean(nextModules.showFaceMesh),
+        maxPoses: nextMaxPoses,
       };
       setDetailModules(normalized);
       detailModulesRef.current = normalized;
       engineRef.current?.setDetailModules({
         enableHands: normalized.enableHands,
         enableFace: normalized.enableFace,
+        maxPoses: nextMaxPoses,
       });
+      if (nextMaxPoses === 1 && latestPersonsRef.current.length > 1) {
+        latestPersonsRef.current = latestPersonsRef.current.slice(0, 1);
+        setPersons(latestPersonsRef.current);
+      }
       if (!normalized.enableHands) {
         latestHandsRef.current = [];
         setHands([]);
@@ -833,6 +889,7 @@ export default function App(): ReactElement {
       faceLandmarks: detailModulesRef.current.enableFace
         ? latestFaceLandmarksRef.current
         : null,
+      persons: latestPersonsRef.current,
     });
 
     const blob = new Blob([jsonText], { type: "application/json" });
@@ -861,6 +918,8 @@ export default function App(): ReactElement {
   const activeDelegate = telemetry.delegate ?? "GPU";
   const detectedHandsCount = telemetry.detectedHandsCount ?? 0;
   const facePointsCount = telemetry.faceLandmarksCount ?? 0;
+  const detectedPersonsCount = telemetry.detectedPersonsCount ?? persons.length;
+  const maxPoses: 1 | 2 = detailModules.maxPoses === 1 ? 1 : 2;
 
   return (
     <div className="flex h-dvh w-full max-w-full flex-col overflow-hidden bg-[#05080f] text-slate-100 select-none">
@@ -910,6 +969,17 @@ export default function App(): ReactElement {
             </span>
           </div>
 
+          {/* V2 Dual-Person Readout */}
+          <div className="hidden items-center gap-1 rounded border border-slate-800 bg-slate-900/90 px-2 py-0.5 font-mono text-[11px] sm:inline-flex">
+            <Users className="h-3 w-3 text-emerald-400" aria-hidden="true" />
+            <span
+              data-testid="hud-persons-count"
+              className="font-semibold text-emerald-200"
+            >
+              {detectedPersonsCount} / {maxPoses} P
+            </span>
+          </div>
+
           {/* V2 Hands Readout */}
           <div className="hidden items-center gap-1 rounded border border-slate-800 bg-slate-900/90 px-2 py-0.5 font-mono text-[11px] sm:inline-flex">
             <Hand className="h-3 w-3 text-cyan-400" aria-hidden="true" />
@@ -917,7 +987,7 @@ export default function App(): ReactElement {
               data-testid="hud-hands-count"
               className="font-semibold text-cyan-200"
             >
-              {detectedHandsCount} / 2
+              {detectedHandsCount} / {maxPoses * 2}
             </span>
           </div>
 
@@ -973,6 +1043,7 @@ export default function App(): ReactElement {
             landmarks={landmarks}
             hands={detailModules.enableHands ? hands : []}
             faceLandmarks={detailModules.enableFace ? faceLandmarks : null}
+            persons={persons}
             showFaceMesh={detailModules.showFaceMesh}
             angles={angles}
             selectedJoints={selectedJoints}
@@ -1008,6 +1079,7 @@ export default function App(): ReactElement {
           onDetailModulesChange={handleDetailModulesChange}
           handMetrics={handMetrics}
           faceHeadMetrics={faceHeadMetrics}
+          persons={persons}
           selectedJoints={selectedJoints}
           onToggleJoint={handleToggleJoint}
           angles={angles}

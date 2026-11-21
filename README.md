@@ -1,8 +1,8 @@
 <div align="center">
 
-# 🦾 Pose Skeleton HUD V2 — 553-Landmark Cybernetic Biometrics & Motion Lab
+# 🦾 Pose Skeleton HUD V2 — Dual-Person 1,106-Landmark Cybernetic Biometrics & Motion Lab
 
-**Real-Time, 100% Client-Side (WebGL / WASM) Full-Body Pose (33), Articulated Hands & 5-Fingers (42), and 3D Face, Gaze-Tracking Iris & Cranial Dome (478) Telemetry Platform**
+**Real-Time, 100% Client-Side (WebGL / WASM) Dual-Person Full-Body Pose (33×2), Articulated Hands & 5-Fingers (21×4), and 3D Face, Gaze-Tracking Iris & Cranial Dome (478×2) Telemetry Platform**
 
 [![Live Demo](https://img.shields.io/badge/🚀_Live_Demo-pose.hamzafpv.com.tr-06B6D4?style=for-the-badge)](https://pose.hamzafpv.com.tr)
 [![Author](https://img.shields.io/badge/🌐_Website-hamzafpv.com.tr-0F172A?style=for-the-badge)](https://hamzafpv.com.tr)
@@ -10,9 +10,9 @@
 [![React](https://img.shields.io/badge/React_19-20232A?style=flat-square&logo=react&logoColor=61DAFB)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript_5.8-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Vite](https://img.shields.io/badge/Vite_8-646CFF?style=flat-square&logo=vite&logoColor=white)](https://vitejs.dev/)
-[![MediaPipe](https://img.shields.io/badge/MediaPipe_Tasks_Vision-553_3D_Landmarks-0097A7?style=flat-square&logo=google&logoColor=white)](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker)
+[![MediaPipe](https://img.shields.io/badge/MediaPipe_Tasks_Vision-Up_to_1106_3D_Landmarks_(2P)-0097A7?style=flat-square&logo=google&logoColor=white)](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS_v4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
-[![Unit Tests](https://img.shields.io/badge/Vitest-73%2F73_Passed-22C55E?style=flat-square&logo=vitest&logoColor=white)](#testing--verification)
+[![Unit Tests](https://img.shields.io/badge/Vitest-74%2F74_Passed-22C55E?style=flat-square&logo=vitest&logoColor=white)](#testing--verification)
 [![E2E Tests](https://img.shields.io/badge/Playwright_E2E-161%2F161_Passed-2EAD33?style=flat-square&logo=playwright&logoColor=white)](#testing--verification)
 [![License: MIT](https://img.shields.io/badge/License-MIT-3B82F6?style=flat-square)](LICENSE)
 
@@ -24,10 +24,11 @@
 
 **Pose Skeleton HUD V2** is a high-FPS, dark cybernetic biomechanics and motion-capture laboratory running **100% locally inside the user's browser** using **WebGL / WebAssembly (`@mediapipe/tasks-vision`)** and a synchronized HiDPI HTML5 `<canvas>` rendering pipeline. Zero video frames ever leave the user's device.
 
-Building upon the V1 33-point full-body skeleton engine, **V2** fuses **three synchronized MediaPipe Vision engines** (`PoseLandmarker` + `HandLandmarker` + `FaceLandmarker`) to track up to **553 3D anatomical landmarks simultaneously**:
-- 🦴 **33 Body Pose Landmarks** (`Lite`, `Full`, and `Heavy` models with live GPU/CPU delegate fallback)
-- 🖐️ **42 Hand & Finger Landmarks** (`21 × 2` hands with 5-finger phalanx articulation, fingertip target halos, and thumb-index pinch laser detection)
-- 👁️ **478 3D Face, Eye, Iris & Cranial Head Landmarks** (3D facial tesselation wireframe, face oval + synthesized 3D cranial skull dome, upper/lower eyelids, gaze-tracking iris rings & pupils, eyebrows, nasal bridge, and inner/outer lips)
+Building upon the V1 33-point full-body skeleton engine, **V2** fuses **three synchronized MediaPipe Vision engines** (`PoseLandmarker` + `HandLandmarker` + `FaceLandmarker`) with an **Optimized Dual-Person (`2P`) Spatial Tracker** to track up to **2 people and 1,106 3D anatomical landmarks simultaneously**:
+- 👥 **Dual-Person (`2P`) Multi-Subject Tracking (`MultiPersonTracker`):** Tracks up to **2 people (`P1` & `P2`)** at the same time with temporal centroid ID locking, distinct cybernetic color palettes (`P1`: Cyan/Magenta, `P2`: Emerald/Amber), per-person One-Euro smoothing filters, and **Adaptive Frame Interleaving** (cutting auxiliary GPU load by 50% when 2 people are in view).
+- 🦴 **33×2 Body Pose Landmarks** (`Lite`, `Full`, and `Heavy` models with live GPU/CPU delegate fallback)
+- 🖐️ **21×4 Hand & Finger Landmarks** (up to 4 hands across 2 people with 5-finger phalanx articulation, fingertip target halos, spatial wrist-to-person binding, and thumb-index pinch laser detection)
+- 👁️ **478×2 3D Face, Eye, Iris & Cranial Head Landmarks** (3D facial tesselation wireframe, face oval + synthesized 3D cranial skull dome, upper/lower eyelids, gaze-tracking iris rings & pupils, eyebrows, nasal bridge, and inner/outer lips for both subjects)
 
 ---
 

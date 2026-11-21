@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   JOINT_DEFINITIONS,
+  MultiPersonTracker,
   POSE_LANDMARK_NAMES,
   PoseSmoother,
   buildPoseSnapshot,
@@ -739,5 +740,83 @@ describe("V2 Hand, Finger & Face/Head Biometrics", () => {
     expect(head?.headYawDeg).toBe(0);
     expect(head?.leftEyeOpenness).toBeGreaterThan(50);
     expect(head?.rightEyeOpenness).toBeGreaterThan(50);
+  });
+
+  it("tracks 2 simultaneous people (P1 & P2) with temporal ID stability and binds 4 hands + 2 faces spatially", () => {
+    const tracker = new MultiPersonTracker();
+    const makePoseAt = (centerX: number): Point3D[] =>
+      Array.from({ length: 33 }, (_, idx) => ({
+        x: centerX + (idx % 2 === 0 ? -0.02 : 0.02),
+        y: idx === 0 ? 0.25 : 0.5,
+        z: 0,
+        visibility: 0.95,
+      }));
+    const makeFaceAt = (centerX: number): Point3D[] =>
+      Array.from({ length: 478 }, () => ({
+        x: centerX,
+        y: 0.25,
+        z: 0,
+      }));
+    const makeHandAt = (
+      centerX: number,
+      handedness: "Left" | "Right",
+    ): TrackedHand => ({
+      handedness,
+      score: 0.95,
+      landmarks: Array.from({ length: 21 }, () => ({
+        x: centerX,
+        y: 0.5,
+        z: 0,
+      })),
+    });
+
+    const poseLeft = makePoseAt(0.25);
+    const poseRight = makePoseAt(0.75);
+    const faceLeft = makeFaceAt(0.25);
+    const faceRight = makeFaceAt(0.75);
+    const hands: TrackedHand[] = [
+      makeHandAt(0.23, "Left"),
+      makeHandAt(0.27, "Right"),
+      makeHandAt(0.73, "Left"),
+      makeHandAt(0.77, "Right"),
+    ];
+
+    // Frame 1: [poseRight, poseLeft] -> sorted left-to-right on initial acquisition
+    const frame1 = tracker.update({
+      poses: [poseRight, poseLeft],
+      hands,
+      faces: [faceRight, faceLeft],
+      selectedJoints: ["left_elbow", "right_elbow"],
+      timestampMs: 1000,
+      smoothing: { enabled: true, strength: 0.5 },
+    });
+
+    expect(frame1).toHaveLength(2);
+    expect(frame1[0]?.personId).toBe(0);
+    expect(frame1[0]?.label).toBe("P1");
+    expect(frame1[0]?.centroid.x).toBeLessThan(0.4);
+    expect(frame1[0]?.hands).toHaveLength(2);
+    expect(frame1[0]?.faceLandmarks).toHaveLength(478);
+
+    expect(frame1[1]?.personId).toBe(1);
+    expect(frame1[1]?.label).toBe("P2");
+    expect(frame1[1]?.centroid.x).toBeGreaterThan(0.6);
+    expect(frame1[1]?.hands).toHaveLength(2);
+    expect(frame1[1]?.faceLandmarks).toHaveLength(478);
+
+    // Frame 2: swap input order [poseLeft, poseRight] -> temporal matching preserves P1 (left) and P2 (right)
+    const frame2 = tracker.update({
+      poses: [poseLeft, poseRight],
+      hands,
+      faces: [faceLeft, faceRight],
+      selectedJoints: ["left_elbow", "right_elbow"],
+      timestampMs: 1033,
+      smoothing: { enabled: true, strength: 0.5 },
+    });
+
+    expect(frame2[0]?.personId).toBe(0);
+    expect(frame2[0]?.centroid.x).toBeLessThan(0.4);
+    expect(frame2[1]?.personId).toBe(1);
+    expect(frame2[1]?.centroid.x).toBeGreaterThan(0.6);
   });
 });
