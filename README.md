@@ -86,20 +86,28 @@ pose_skeleton_hud_v2/
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Local Installation & Development
 
-### Prerequisites
-- **Node.js** `>= 20` and **npm**
+> **Just want to try it without installing anything?** Open the live web app directly at **[pose.hamzafpv.com.tr](https://pose.hamzafpv.com.tr)**.
 
-### Local Development
+### Dependencies
+
+- [Git](https://git-scm.com/downloads)
+- [Node.js 20+](https://nodejs.org/) *(includes `npm`)*
+
+### Run Locally
+
+Clone the repository, install dependencies, and start the dev server:
 
 ```bash
-# Install dependencies
+git clone https://github.com/0dayfpv/pose-skeleton-hud.git
+cd pose-skeleton-hud
 npm install
-
-# Start Vite development server
 npm run dev
 ```
+
+- `npm install` automatically copies the self-hosted MediaPipe WASM files into `public/wasm/`.
+- Open **`http://localhost:5173`** in your browser and allow webcam access.
 
 ### Production Build
 
@@ -122,7 +130,7 @@ npm run lint
 # Run TypeScript compiler verification (0 errors)
 npm run typecheck
 
-# Run Vitest unit test suite (73/73 unit tests)
+# Run Vitest unit test suite (74/74 unit tests)
 npx vitest run
 
 # Run Playwright headless Chromium E2E test suite
